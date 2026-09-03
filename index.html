@@ -1,0 +1,193 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>网页版 Minecraft 体验版</title>
+  <style>
+    body { margin: 0; overflow: hidden; font-family: sans-serif; user-select: none; }
+    #crosshair {
+      position: absolute; top: 50%; left: 50%;
+      width: 10px; height: 10px;
+      transform: translate(-50%, -50%);
+      color: white; font-size: 24px; pointer-events: none;
+    }
+    #instructions {
+      position: absolute; top: 20px; left: 20px;
+      color: white; background: rgba(0,0,0,0.6);
+      padding: 15px; border-radius: 8px; pointer-events: none;
+    }
+  </style>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/controls/PointerLockControls.js"></script>
+</head>
+<body>
+
+  <div id="crosshair">+</div>
+  <div id="instructions">
+    <h2>🎮 游戏操作说明</h2>
+    <p><b>点击画面</b> 锁定视角并开始游戏</p>
+    <p><b>W, A, S, D</b>：移动</p>
+    <p><b>空格键 (Space)</b>：跳跃</p>
+    <p><b>鼠标左键</b>：破坏方块</p>
+    <p><b>鼠标右键</b>：放置方块</p>
+    <p><b>ESC</b>：退出视角锁定</p>
+  </div>
+
+  <script>
+    // 1. 基础场景、相机与渲染器配置
+    const scene = new THREE.Scene();
+    scene.background = new THREE.Color(0x87ceeb); // 天蓝色天空
+    scene.fog = new THREE.FogExp2(0x87ceeb, 0.015);
+
+    const camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 1000);
+    const renderer = new THREE.WebGLRenderer({ antialias: true });
+    renderer.setSize(window.innerWidth, window.innerHeight);
+    document.body.appendChild(renderer.domElement);
+
+    // 光照
+    const ambientLight = new THREE.AmbientLight(0xffffff, 0.6);
+    scene.add(ambientLight);
+    const dirLight = new THREE.DirectionalLight(0xffffff, 0.8);
+    dirLight.position.set(20, 40, 20);
+    scene.add(dirLight);
+
+    // 2. 视角控制器 (PointerLockControls)
+    const controls = new THREE.PointerLockControls(camera, document.body);
+    const instructions = document.getElementById('instructions');
+
+    document.addEventListener('click', () => { controls.lock(); });
+    controls.addEventListener('lock', () => { instructions.style.display = 'none'; });
+    controls.addEventListener('unlock', () => { instructions.style.display = 'block'; });
+
+    // 3. 方块材质与纹理
+    const blockGeometry = new THREE.BoxGeometry(1, 1, 1);
+    const blockMaterial = new THREE.MeshLambertMaterial({ color: 0x559944 }); // 草地绿色
+
+    // 存储所有生成的方块网格
+    const blocks = [];
+
+    // 生成简易地形 (16x16 范围)
+    for (let x = -8; x < 8; x++) {
+      for (let z = -8; z < 8; z++) {
+        // 使用简单的起伏计算生成地形高度
+        const height = Math.floor(Math.sin(x * 0.3) + Math.cos(z * 0.3)) + 2;
+        for (let y = 0; y <= height; y++) {
+          const cube = new THREE.Mesh(blockGeometry, blockMaterial);
+          cube.position.set(x, y, z);
+          scene.add(cube);
+          blocks.push(cube);
+        }
+      }
+    }
+
+    camera.position.set(0, 5, 5);
+
+    // 4. 玩家移动逻辑与物理变量
+    let moveForward = false, moveBackward = false, moveLeft = false, moveRight = false;
+    let canJump = false;
+    const velocity = new THREE.Vector3();
+    const direction = new THREE.Vector3();
+
+    const onKeyDown = (e) => {
+      switch (e.code) {
+        case 'KeyW': moveForward = true; break;
+        case 'KeyA': moveLeft = true; break;
+        case 'KeyS': moveBackward = true; break;
+        case 'KeyD': moveRight = true; break;
+        case 'Space': if (canJump) velocity.y += 12; canJump = false; break;
+      }
+    };
+
+    const onKeyUp = (e) => {
+      switch (e.code) {
+        case 'KeyW': moveForward = false; break;
+        case 'KeyA': moveLeft = false; break;
+        case 'KeyS': moveBackward = false; break;
+        case 'KeyD': moveRight = false; break;
+      }
+    };
+
+    document.addEventListener('keydown', onKeyDown);
+    document.addEventListener('keyup', onKeyUp);
+
+    // 5. 交互：破坏与放置方块 (Raycaster)
+    const raycaster = new THREE.Raycaster();
+    const mouse = new THREE.Vector2(0, 0); // 始终指向屏幕中央
+
+    document.addEventListener('mousedown', (e) => {
+      if (!controls.isLocked) return;
+
+      raycaster.setFromCamera(mouse, camera);
+      const intersects = raycaster.intersectObjects(blocks);
+
+      if (intersects.length > 0) {
+        const intersect = intersects[0];
+
+        if (e.button === 0) {
+          // 左键：移除/破坏方块
+          scene.remove(intersect.object);
+          blocks.splice(blocks.indexOf(intersect.object), 1);
+        } else if (e.button === 2) {
+          // 右键：放置方块
+          const newBlock = new THREE.Mesh(blockGeometry, blockMaterial);
+          // 在被击中的面的法线方向放置新方块
+          newBlock.position.copy(intersect.object.position).add(intersect.face.normal);
+          scene.add(newBlock);
+          blocks.push(newBlock);
+        }
+      }
+    });
+
+    // 屏蔽右键默认菜单
+    document.addEventListener('contextmenu', e => e.preventDefault());
+
+    // 6. 游戏渲染与物理循环
+    let prevTime = performance.now();
+
+    function animate() {
+      requestAnimationFrame(animate);
+
+      const time = performance.now();
+      const delta = (time - prevTime) / 1000;
+
+      if (controls.isLocked) {
+        // 减速阻尼
+        velocity.x -= velocity.x * 10.0 * delta;
+        velocity.z -= velocity.z * 10.0 * delta;
+        velocity.y -= 9.8 * 3.0 * delta; // 重力模拟 (g = 9.8)
+
+        direction.z = Number(moveForward) - Number(moveBackward);
+        direction.x = Number(moveRight) - Number(moveLeft);
+        direction.normalize();
+
+        if (moveForward || moveBackward) velocity.z -= direction.z * 40.0 * delta;
+        if (moveLeft || moveRight) velocity.x -= direction.x * 40.0 * delta;
+
+        controls.moveRight(-velocity.x * delta);
+        controls.moveForward(-velocity.z * delta);
+        controls.getObject().position.y += velocity.y * delta;
+
+        // 简易地面碰撞测试 (防止无限下落)
+        if (controls.getObject().position.y < 4) {
+          velocity.y = 0;
+          controls.getObject().position.y = 4;
+          canJump = true;
+        }
+      }
+
+      prevTime = time;
+      renderer.render(scene, camera);
+    }
+
+    animate();
+
+    // 7. 窗口尺寸自适应
+    window.addEventListener('resize', () => {
+      camera.aspect = window.innerWidth / window.innerHeight;
+      camera.updateProjectionMatrix();
+      renderer.setSize(window.innerWidth, window.innerHeight);
+    });
+  </script>
+</body>
+</html>
